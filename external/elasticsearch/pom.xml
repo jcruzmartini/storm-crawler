@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>com.digitalpebble.stormcrawler</groupId>
 		<artifactId>storm-crawler-external</artifactId>
-		<version>1.11-SNAPSHOT</version>
+		<version>1.13-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
 	</parent>
 
@@ -20,7 +20,7 @@
 		<dependency>
 			<groupId>org.elasticsearch.client</groupId>
 			<artifactId>elasticsearch-rest-high-level-client</artifactId>
-			<version>6.3.1</version>
+			<version>6.5.0</version>
 		</dependency>
 	</dependencies>
 </project>

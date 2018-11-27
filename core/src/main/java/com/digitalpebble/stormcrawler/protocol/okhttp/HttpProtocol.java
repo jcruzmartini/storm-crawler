@@ -20,15 +20,26 @@ package com.digitalpebble.stormcrawler.protocol.okhttp;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.InetSocketAddress;
+import java.net.MalformedURLException;
 import java.net.Proxy;
+import java.net.URL;
+import java.security.cert.CertificateException;
 import java.util.Base64;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Locale;
 import java.util.concurrent.TimeUnit;
 
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.SSLSocketFactory;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 import org.apache.commons.lang.StringUtils;
 import org.apache.commons.lang.mutable.MutableBoolean;
+import org.apache.http.cookie.Cookie;
 import org.apache.http.util.ByteArrayBuffer;
 import org.apache.storm.Config;
 import org.slf4j.LoggerFactory;
@@ -37,13 +48,16 @@ import com.digitalpebble.stormcrawler.Metadata;
 import com.digitalpebble.stormcrawler.protocol.AbstractHttpProtocol;
 import com.digitalpebble.stormcrawler.protocol.ProtocolResponse;
 import com.digitalpebble.stormcrawler.util.ConfUtils;
+import com.digitalpebble.stormcrawler.util.CookieConverter;
 
 import okhttp3.Call;
 import okhttp3.Headers;
 import okhttp3.Interceptor;
+import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Request.Builder;
+import okhttp3.RequestBody;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 
@@ -51,6 +65,9 @@ public class HttpProtocol extends AbstractHttpProtocol {
 
     private static final org.slf4j.Logger LOG = LoggerFactory
             .getLogger(HttpProtocol.class);
+
+    private final MediaType JSON = MediaType
+            .parse("application/json; charset=utf-8");
 
     private OkHttpClient client;
 
@@ -62,6 +79,38 @@ public class HttpProtocol extends AbstractHttpProtocol {
     private final static String VERBATIM_RESPONSE_KEY = "_response.headers_";
 
     private final List<String[]> customRequestHeaders = new LinkedList<>();
+
+    private static final TrustManager[] trustAllCerts = new TrustManager[] { new X509TrustManager() {
+        @Override
+        public void checkClientTrusted(
+                java.security.cert.X509Certificate[] chain, String authType)
+                throws CertificateException {
+        }
+
+        @Override
+        public void checkServerTrusted(
+                java.security.cert.X509Certificate[] chain, String authType)
+                throws CertificateException {
+        }
+
+        @Override
+        public java.security.cert.X509Certificate[] getAcceptedIssuers() {
+            return new java.security.cert.X509Certificate[] {};
+        }
+    } };
+
+    private static final SSLContext trustAllSslContext;
+    static {
+        try {
+            trustAllSslContext = SSLContext.getInstance("SSL");
+            trustAllSslContext.init(null, trustAllCerts,
+                    new java.security.SecureRandom());
+        } catch (Exception e) {
+            throw new RuntimeException(e);
+        }
+    }
+    private static final SSLSocketFactory trustAllSslSocketFactory = trustAllSslContext
+            .getSocketFactory();
 
     @Override
     public void configure(Config conf) {
@@ -114,12 +163,37 @@ public class HttpProtocol extends AbstractHttpProtocol {
             builder.addNetworkInterceptor(new HTTPHeadersInterceptor());
         }
 
+        if (ConfUtils.getBoolean(conf, "http.trust.everything", true)) {
+            builder.sslSocketFactory(trustAllSslSocketFactory,
+                    (X509TrustManager) trustAllCerts[0]);
+            builder.hostnameVerifier(new HostnameVerifier() {
+                @Override
+                public boolean verify(String hostname, SSLSession session) {
+                    return true;
+                }
+            });
+        }
+
         client = builder.build();
     }
 
+    private void addCookiesToRequest(Builder rb, String url, Metadata md) {
+        String[] cookieStrings = md.getValues(RESPONSE_COOKIES_HEADER);
+        if (cookieStrings == null || cookieStrings.length == 0) {
+            return;
+        }
+        try {
+            List<Cookie> cookies = CookieConverter.getCookies(cookieStrings,
+                    new URL(url));
+            for (Cookie c : cookies) {
+                rb.addHeader("Cookie", c.getName() + "=" + c.getValue());
+            }
+        } catch (MalformedURLException e) { // Bad url , nothing to do
+        }
+    }
+
     @Override
-    public ProtocolResponse getProtocolOutput(String url,
-            final Metadata metadata) throws Exception {
+    public ProtocolResponse getProtocolOutput(String url, final Metadata metadata) throws Exception {
         Builder rb = new Request.Builder().url(url);
 
         customRequestHeaders.forEach((k) -> {
@@ -135,6 +209,26 @@ public class HttpProtocol extends AbstractHttpProtocol {
             String ifNoneMatch = metadata.getFirstValue("etag");
             if (StringUtils.isNotBlank(ifNoneMatch)) {
                 rb.header("If-None-Match", ifNoneMatch);
+            }
+
+            String accept = metadata.getFirstValue("http.accept");
+            if (StringUtils.isNotBlank(accept)) {
+                rb.header("Accept", accept);
+            }
+
+            String acceptLanguage = metadata.getFirstValue("http.accept.language");
+            if (StringUtils.isNotBlank(acceptLanguage)) {
+                rb.header("Accept-Language", acceptLanguage);
+            }
+
+            if (useCookies) {
+                addCookiesToRequest(rb, url, metadata);
+            }
+            
+            String postJSONData = metadata.getFirstValue("http.post.json");
+            if (StringUtils.isNotBlank(postJSONData)) {
+                RequestBody body = RequestBody.create(JSON, postJSONData);
+                rb.post(body);
             }
         }
 
@@ -152,8 +246,7 @@ public class HttpProtocol extends AbstractHttpProtocol {
                 String key = headers.name(i);
                 String value = headers.value(i);
 
-                if (key.equalsIgnoreCase(VERBATIM_REQUEST_KEY)
-                        || key.equalsIgnoreCase(VERBATIM_RESPONSE_KEY)) {
+                if (key.equalsIgnoreCase(VERBATIM_REQUEST_KEY) || key.equalsIgnoreCase(VERBATIM_RESPONSE_KEY)) {
                     value = new String(Base64.getDecoder().decode(value));
                 }
 
@@ -170,8 +263,7 @@ public class HttpProtocol extends AbstractHttpProtocol {
                 LOG.warn("HTTP content trimmed to {}", bytes.length);
             }
 
-            return new ProtocolResponse(bytes, response.code(),
-                    responsemetadata);
+            return new ProtocolResponse(bytes, response.code(), responsemetadata);
         }
     }
 

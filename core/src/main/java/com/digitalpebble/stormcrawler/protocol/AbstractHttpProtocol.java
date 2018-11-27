@@ -16,7 +16,10 @@
  */
 package com.digitalpebble.stormcrawler.protocol;
 
+import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
@@ -30,6 +33,7 @@ import org.apache.storm.utils.Utils;
 
 import com.digitalpebble.stormcrawler.Metadata;
 import com.digitalpebble.stormcrawler.util.ConfUtils;
+import com.digitalpebble.stormcrawler.util.StringTabScheme;
 
 import crawlercommons.robots.BaseRobotRules;
 
@@ -42,6 +46,8 @@ public abstract class AbstractHttpProtocol implements Protocol {
     protected boolean storeHTTPHeaders = false;
 
     protected boolean useCookies = false;
+
+    protected static final String RESPONSE_COOKIES_HEADER = "set-cookie";
 
     @Override
     public void configure(Config conf) {
@@ -140,9 +146,14 @@ public abstract class AbstractHttpProtocol implements Protocol {
 
         class Fetchable implements Runnable {
             String url;
+            Metadata md;
 
-            Fetchable(String url) {
-                this.url = url;
+            Fetchable(String line) {
+                StringTabScheme scheme = new StringTabScheme();
+                List<Object> tuple = scheme.deserialize(ByteBuffer.wrap(line
+                        .getBytes(StandardCharsets.UTF_8)));
+                this.url = (String) tuple.get(0);
+                this.md = (Metadata) tuple.get(1);
             }
 
             public void run() {
@@ -164,7 +175,6 @@ public abstract class AbstractHttpProtocol implements Protocol {
                             .append(rules.getSitemaps().size()).append("\n");
                 }
 
-                Metadata md = new Metadata();
                 long start = System.currentTimeMillis();
                 ProtocolResponse response;
                 try {

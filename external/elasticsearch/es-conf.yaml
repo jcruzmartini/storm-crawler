@@ -5,7 +5,7 @@ config:
   # adresses can be specified as a full URL
   # if not we assume that the protocol is http and the port 9200
   es.indexer.addresses: "localhost"
-  es.indexer.index.name: "index"
+  es.indexer.index.name: "content"
   # es.indexer.pipeline: "_PIPELINE_"
   es.indexer.doc.type: "doc"
   es.indexer.create: false
@@ -44,10 +44,15 @@ config:
   # es.status.filterQuery: "-(metadata.hostname:stormcrawler.net)"
 
   # time in secs for which the URLs will be considered for fetching after a ack of fail
-  es.status.ttl.purgatory: 30
+  spout.ttl.purgatory: 30
   
   # Min time (in msecs) to allow between 2 successive queries to ES
-  es.status.min.delay.queries: 2000
+  spout.min.delay.queries: 2000
+
+  # Delay since previous query date (in secs) after which the nextFetchDate value will be reset to the current time
+  # Setting this to -1 or a large value means that the ES will cache the results but also that less and less results
+  # might be returned.
+  spout.reset.fetchdate.after: 120
 
   es.status.max.buckets: 50
   es.status.max.urls.per.bucket: 2
@@ -57,11 +62,6 @@ config:
   es.status.bucket.sort.field: "nextFetchDate"
   # field to sort the buckets
   es.status.global.sort.field: "nextFetchDate"
-  
-  # Delay since previous query date (in secs) after which the nextFetchDate value will be reset to the current time
-  # Setting this to -1 or a large value means that the ES will cache the results but also that less and less results
-  # might be returned.
-  es.status.reset.fetchdate.after: 120
 
   # CollapsingSpout : limits the deep paging by resetting the start offset for the ES query 
   es.status.max.start.offset: 500

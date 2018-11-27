@@ -41,7 +41,7 @@ We'll assume that Elasticsearch and Kibana are installed and running on your mac
 
 With a basic project set up, such as the one generated from the archetype \:
 
-`mvn archetype:generate -DarchetypeGroupId=com.digitalpebble.stormcrawler -DarchetypeArtifactId=storm-crawler-archetype -DarchetypeVersion=1.10`
+`mvn archetype:generate -DarchetypeGroupId=com.digitalpebble.stormcrawler -DarchetypeArtifactId=storm-crawler-archetype -DarchetypeVersion=1.12`
 
 Copy the es-conf.yaml and flux files to the directory. You can then edit the pom.xml and add the dependency for the Elasticsearch module
 
@@ -49,11 +49,11 @@ Copy the es-conf.yaml and flux files to the directory. You can then edit the pom
 		<dependency>
 			<groupId>com.digitalpebble.stormcrawler</groupId>
 			<artifactId>storm-crawler-elasticsearch</artifactId>
-			<version>1.10</version>
+			<version>1.12</version>
 		</dependency>
 ```
 
-Then we run the script `ES_IndexInit.sh`, which creates 3 indices : one for persisting the status of URLs (_status_), a template mapping for persisting the Storm metrics (for any indices with a name matching _metrics*_) as well as a third index (_index_) for searching the documents fetched by StormCrawler (you should probably tune its mapping later on e.g. if you want to store the _content_ field). You will also need to edit the script if Elasticsearch is running on a different machine.
+Then we run the script `ES_IndexInit.sh`, which creates 3 indices : one for persisting the status of URLs (_status_), a template mapping for persisting the Storm metrics (for any indices with a name matching _metrics*_) as well as a third index (_content_) for searching the documents fetched by StormCrawler (you should probably tune its mapping later on e.g. if you want to store the _content_ field). You will also need to edit the script if Elasticsearch is running on a different machine.
 
 We can inject the seed URLs into the _status_ index by putting them in a text file with one URL per line and any keay values separated by tabulations e.g.
 

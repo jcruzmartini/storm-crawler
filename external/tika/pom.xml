@@ -5,7 +5,7 @@
 	<parent>
 		<groupId>com.digitalpebble.stormcrawler</groupId>
 		<artifactId>storm-crawler-external</artifactId>
-		<version>1.11-SNAPSHOT</version>
+		<version>1.13-SNAPSHOT</version>
 		<relativePath>../pom.xml</relativePath>
 	</parent>
 
@@ -29,6 +29,10 @@
 				<exclusion>
 					<artifactId>asm</artifactId>
 					<groupId>asm</groupId>
+				</exclusion>
+				<exclusion>
+					<groupId>org.slf4j</groupId>
+					<artifactId>slf4j-log4j12</artifactId>
 				</exclusion>
 			</exclusions>
 		</dependency>
