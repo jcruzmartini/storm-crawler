@@ -77,14 +77,16 @@
 	</properties>
 
 	<distributionManagement>
-		<snapshotRepository>
-			<id>ossrh</id>
-			<url>http://maven.internal.g2llc.com:8081/content/groups/internal/</url>
-		</snapshotRepository>
 		<repository>
-			<id>ossrh</id>
-			<url>http://maven.internal.g2llc.com:8081/content/groups/internal/</url>
+			<id>internal.releases</id>
+			<name>G2 Internal Release</name>
+			<url>http://maven.internal.g2llc.com:8081/content/repositories/releases/</url>
 		</repository>
+		<snapshotRepository>
+			<id>internal.snapshots</id>
+			<name>G2 Internal Snapshot</name>
+			<url>http://maven.internal.g2llc.com:8081/content/repositories/snapshots/</url>
+		</snapshotRepository>
 	</distributionManagement>
 
 	<build>
