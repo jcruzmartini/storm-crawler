@@ -79,11 +79,11 @@
 	<distributionManagement>
 		<snapshotRepository>
 			<id>ossrh</id>
-			<url>https://oss.sonatype.org/content/repositories/snapshots</url>
+			<url>http://maven.internal.g2llc.com:8081/content/groups/internal/</url>
 		</snapshotRepository>
 		<repository>
 			<id>ossrh</id>
-			<url>https://oss.sonatype.org/service/local/staging/deploy/maven2/</url>
+			<url>http://maven.internal.g2llc.com:8081/content/groups/internal/</url>
 		</repository>
 	</distributionManagement>
 
