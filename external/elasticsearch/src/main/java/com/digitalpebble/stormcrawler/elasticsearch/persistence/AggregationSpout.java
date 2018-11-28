@@ -119,7 +119,7 @@ public class AggregationSpout extends AbstractSpout implements
                     QueryBuilders.queryStringQuery(filterQuery));
         }
 
-        SearchRequest request = new SearchRequest(indexName).types(docType)
+        SearchRequest request = new SearchRequest(getIndexName()).types(docType)
                 .searchType(SearchType.QUERY_THEN_FETCH);
 
         SearchSourceBuilder sourceBuilder = new SearchSourceBuilder();
@@ -177,7 +177,7 @@ public class AggregationSpout extends AbstractSpout implements
         client.searchAsync(request, this);
     }
 
-    @Override
+	@Override
     public void onFailure(Exception arg0) {
         LOG.error("Exception with ES query", arg0);
         isInQuery.set(false);
@@ -335,5 +335,13 @@ public class AggregationSpout extends AbstractSpout implements
         // remove lock
         isInQuery.set(false);
     }
+    
+    /**
+     * Must be overridden for implementing custom logic when handling multiples status indexes at same time.
+     * By Default, indexName coming from config is used 
+     */
+    protected String getIndexName() {
+		return indexName;
+	}
 
 }
