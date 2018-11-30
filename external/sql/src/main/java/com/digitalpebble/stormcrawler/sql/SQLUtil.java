@@ -20,9 +20,10 @@ package com.digitalpebble.stormcrawler.sql;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.SQLException;
+import java.util.HashMap;
 import java.util.Map;
-
-import com.digitalpebble.stormcrawler.util.ConfUtils;
+import java.util.Map.Entry;
+import java.util.Properties;
 
 public class SQLUtil {
 
@@ -30,16 +31,28 @@ public class SQLUtil {
     }
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
-    static Connection getConnection(Map stormConf) throws SQLException {
+    public static Connection getConnection(Map stormConf) throws SQLException {
         // SQL connection details
-        String url = ConfUtils.getString(stormConf,
-                Constants.MYSQL_URL_PARAM_NAME,
-                "jdbc:mysql://localhost:3306/crawl");
-        String user = ConfUtils.getString(stormConf,
-                Constants.MYSQL_USER_PARAM_NAME);
-        String password = ConfUtils.getString(stormConf,
-                Constants.MYSQL_PASSWORD_PARAM_NAME);
-        return DriverManager.getConnection(url, user, password);
+        Map<String, String> sqlConf = (Map) stormConf.get("sql.connection");
+
+        if (sqlConf == null) {
+            throw new RuntimeException(
+                    "Missing SQL connection config, add a section 'sql.connection' to the configuration");
+        }
+
+        String url = sqlConf.get("url");
+        if (url == null) {
+            throw new RuntimeException(
+                    "Missing SQL url, add an entry 'url' to the section 'sql.connection' of the configuration");
+        }
+
+        Properties props = new Properties();
+
+        for (Entry<String, String> entry : sqlConf.entrySet()) {
+            props.setProperty(entry.getKey(), entry.getValue());
+        }
+
+        return DriverManager.getConnection(url, props);
     }
 
 }

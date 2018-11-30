@@ -82,8 +82,6 @@ public class HttpProtocol extends AbstractHttpProtocol implements
 
     private RequestConfig requestConfig;
 
-    public static final String RESPONSE_COOKIES_HEADER = "set-cookie";
-
     @Override
     public void configure(final Config conf) {
 
@@ -209,6 +207,17 @@ public class HttpProtocol extends AbstractHttpProtocol implements
             String ifNoneMatch = md.getFirstValue("etag");
             if (StringUtils.isNotBlank(ifNoneMatch)) {
                 request.addHeader("If-None-Match", ifNoneMatch);
+            }
+
+            String accept = md.getFirstValue("http.accept");
+            if (StringUtils.isNotBlank(accept)) {
+                request.setHeader(new BasicHeader("Accept", accept));
+            }
+
+            String acceptLanguage = md.getFirstValue("http.accept.language");
+            if (StringUtils.isNotBlank(acceptLanguage)) {
+                request.setHeader(new BasicHeader("Accept-Language",
+                        acceptLanguage));
             }
 
             if (useCookies) {

@@ -29,6 +29,7 @@ import java.util.HashMap;
 import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
 
 import org.apache.commons.lang.StringUtils;
 import org.apache.storm.metric.api.MultiCountMetric;
@@ -50,7 +51,7 @@ import org.w3c.dom.DocumentFragment;
 
 import com.digitalpebble.stormcrawler.Constants;
 import com.digitalpebble.stormcrawler.Metadata;
-import com.digitalpebble.stormcrawler.parse.JSoupDOMBuilder;
+import com.digitalpebble.stormcrawler.parse.DocumentFragmentBuilder;
 import com.digitalpebble.stormcrawler.parse.Outlink;
 import com.digitalpebble.stormcrawler.parse.ParseData;
 import com.digitalpebble.stormcrawler.parse.ParseFilter;
@@ -87,6 +88,8 @@ public class JSoupParserBolt extends StatusEmitterBolt {
     private boolean trackAnchors = true;
 
     private boolean emitOutlinks = true;
+
+    private int maxOutlinksPerPage = -1;
 
     private boolean robots_noFollow_strict = true;
 
@@ -129,6 +132,9 @@ public class JSoupParserBolt extends StatusEmitterBolt {
 
         maxLengthCharsetDetection = ConfUtils.getInt(conf,
                 "detect.charset.maxlength", -1);
+
+        maxOutlinksPerPage = ConfUtils.getInt(conf,
+                "parser.emitOutlinks.max.per.page", -1);
     }
 
     @Override
@@ -327,7 +333,7 @@ public class JSoupParserBolt extends StatusEmitterBolt {
             DocumentFragment fragment = null;
             // lazy building of fragment
             if (parseFilters.needsDOM()) {
-                fragment = JSoupDOMBuilder.jsoup2HTML(jsoupDoc);
+                fragment = DocumentFragmentBuilder.fromJsoup(jsoupDoc);
             }
             parseFilters.filter(url, content, fragment, parse);
         } catch (RuntimeException e) {
@@ -339,7 +345,10 @@ public class JSoupParserBolt extends StatusEmitterBolt {
         }
 
         if (emitOutlinks) {
-            for (Outlink outlink : parse.getOutlinks()) {
+            final List<Outlink> outlinksAfterLimit = (maxOutlinksPerPage == -1) ? parse
+                    .getOutlinks() : parse.getOutlinks().stream()
+                    .limit(maxOutlinksPerPage).collect(Collectors.toList());
+            for (Outlink outlink : outlinksAfterLimit) {
                 collector.emit(
                         StatusStreamName,
                         tuple,
@@ -397,14 +406,8 @@ public class JSoupParserBolt extends StatusEmitterBolt {
             metadata.set(org.apache.tika.metadata.Metadata.CONTENT_TYPE, httpCT);
         }
 
-        // use filename as a clue
-        try {
-            URL _url = new URL(URL);
-            metadata.set(org.apache.tika.metadata.Metadata.RESOURCE_NAME_KEY,
-                    _url.getFile());
-        } catch (MalformedURLException e1) {
-            throw new IllegalStateException("Malformed URL", e1);
-        }
+        // use full URL as a clue
+        metadata.set(org.apache.tika.metadata.Metadata.RESOURCE_NAME_KEY, URL);
 
         try (InputStream stream = TikaInputStream.get(content)) {
             MediaType mt = detector.detect(stream, metadata);

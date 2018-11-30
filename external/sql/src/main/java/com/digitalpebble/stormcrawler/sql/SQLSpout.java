@@ -25,58 +25,31 @@ import java.sql.Statement;
 import java.sql.Timestamp;
 import java.time.Instant;
 import java.util.Date;
-import java.util.HashSet;
-import java.util.LinkedList;
 import java.util.List;
 import java.util.Map;
-import java.util.Queue;
-import java.util.Set;
 
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
-
-import com.digitalpebble.stormcrawler.util.CollectionMetric;
-import com.digitalpebble.stormcrawler.util.ConfUtils;
-import com.digitalpebble.stormcrawler.util.StringTabScheme;
-
-import org.apache.storm.metric.api.MultiCountMetric;
 import org.apache.storm.spout.Scheme;
 import org.apache.storm.spout.SpoutOutputCollector;
 import org.apache.storm.task.TopologyContext;
 import org.apache.storm.topology.OutputFieldsDeclarer;
-import org.apache.storm.topology.base.BaseRichSpout;
-import org.apache.storm.utils.Utils;
+import org.apache.storm.tuple.Values;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import com.digitalpebble.stormcrawler.persistence.AbstractQueryingSpout;
+import com.digitalpebble.stormcrawler.util.ConfUtils;
+import com.digitalpebble.stormcrawler.util.StringTabScheme;
 
 @SuppressWarnings("serial")
-public class SQLSpout extends BaseRichSpout {
+public class SQLSpout extends AbstractQueryingSpout {
 
     public static final Logger LOG = LoggerFactory.getLogger(SQLSpout.class);
 
     private static final Scheme SCHEME = new StringTabScheme();
 
-    private SpoutOutputCollector _collector;
-
     private String tableName;
 
     private Connection connection;
-
-    private int bufferSize = 100;
-
-    private Queue<List<Object>> buffer = new LinkedList<>();
-
-    /**
-     * Keeps track of the URLs in flight so that we don't add them more than
-     * once when the table contains just a few URLs
-     **/
-    private Set<String> beingProcessed = new HashSet<>();
-
-    private boolean active;
-
-    private MultiCountMetric eventCounter;
-
-    private int minWaitBetweenQueriesMSec = 5000;
-
-    private long lastQueryTime = System.currentTimeMillis();
 
     /**
      * if more than one instance of the spout exist, each one is in charge of a
@@ -84,27 +57,30 @@ public class SQLSpout extends BaseRichSpout {
      **/
     private int bucketNum = -1;
 
-    private CollectionMetric queryTimes;
-
     /** Used to distinguish between instances in the logs **/
     protected String logIdprefix = "";
+
+    private int maxDocsPerBucket;
+
+    private int maxNumResults;
+
+    private Instant lastNextFetchDate = null;
 
     @SuppressWarnings({ "rawtypes", "unchecked" })
     @Override
     public void open(Map conf, TopologyContext context,
             SpoutOutputCollector collector) {
-        _collector = collector;
 
-        this.eventCounter = context.registerMetric("spout",
-                new MultiCountMetric(), 10);
+        super.open(conf, context, collector);
 
-        bufferSize = ConfUtils.getInt(conf,
-                Constants.MYSQL_BUFFERSIZE_PARAM_NAME, 100);
+        maxDocsPerBucket = ConfUtils.getInt(conf,
+                Constants.SQL_MAX_DOCS_BUCKET_PARAM_NAME, 5);
 
-        minWaitBetweenQueriesMSec = ConfUtils.getInt(conf,
-                Constants.MYSQL_MIN_QUERY_INTERVAL_PARAM_NAME, 5000);
+        tableName = ConfUtils.getString(conf,
+                Constants.SQL_STATUS_TABLE_PARAM_NAME, "urls");
 
-        tableName = ConfUtils.getString(conf, Constants.MYSQL_TABLE_PARAM_NAME);
+        maxNumResults = ConfUtils.getInt(conf,
+                Constants.SQL_MAXRESULTS_PARAM_NAME, 100);
 
         try {
             connection = SQLUtil.getConnection(conf);
@@ -121,9 +97,6 @@ public class SQLSpout extends BaseRichSpout {
                     + context.getThisTaskIndex() + "] ";
             bucketNum = context.getThisTaskIndex();
         }
-
-        queryTimes = new CollectionMetric();
-        context.registerMetric("query_time_msec", queryTimes, 10);
     }
 
     @Override
@@ -132,60 +105,41 @@ public class SQLSpout extends BaseRichSpout {
     }
 
     @Override
-    public void nextTuple() {
-        if (!active)
-            return;
+    protected void populateBuffer() {
 
-        if (!buffer.isEmpty()) {
-            List<Object> fields = buffer.remove();
-            String url = fields.get(0).toString();
-            this._collector.emit(fields, url);
-            beingProcessed.add(url);
-            return;
-        }
-
-        if (throttleQueries()) {
-            // sleep for a bit but not too much in order to give ack/fail a
-            // chance
-            Utils.sleep(10);
-            return;
-        }
-
-        // re-populate the buffer
-        populateBuffer();
-    }
-
-    /** Returns true if SQL was queried too recently and needs throttling **/
-    protected boolean throttleQueries() {
-        if (lastQueryTime != 0) {
-            // check that we allowed some time between queries
-            long difference = Instant.now().toEpochMilli() - lastQueryTime;
-            if (difference < minWaitBetweenQueriesMSec) {
-                long sleepTime = minWaitBetweenQueriesMSec - difference;
-                LOG.debug(
-                        "{} Not enough time elapsed since {} - should try again in {}",
-                        logIdprefix, lastQueryTime, sleepTime);
-                return true;
+        if (lastNextFetchDate == null) {
+            lastNextFetchDate = Instant.now();
+        } else if (resetFetchDateAfterNSecs != -1) {
+            Instant changeNeededOn = Instant.ofEpochMilli(lastTimeResetToNOW
+                    .toEpochMilli() + (resetFetchDateAfterNSecs * 1000));
+            if (Instant.now().isAfter(changeNeededOn)) {
+                LOG.info("lastDate reset based on resetFetchDateAfterNSecs {}",
+                        resetFetchDateAfterNSecs);
+                lastNextFetchDate = Instant.now();
             }
         }
-        return false;
-    }
-
-    private void populateBuffer() {
-
-        lastQueryTime = Instant.now().toEpochMilli();
 
         // select entries from mysql
-        String query = "SELECT * FROM " + tableName;
+        // https://mariadb.com/kb/en/library/window-functions-overview/
+        // http://www.mysqltutorial.org/mysql-window-functions/mysql-rank-function/
+
+        String query = "SELECT * from (select rank() over (partition by host order by nextfetchdate desc, url) as ranking, url, metadata, nextfetchdate from "
+                + tableName;
+
         query += " WHERE nextfetchdate <= '"
-                + new Timestamp(new Date().getTime()) + "'";
+                + new Timestamp(lastNextFetchDate.toEpochMilli()) + "'";
 
         // constraint on bucket num
         if (bucketNum >= 0) {
             query += " AND bucket = '" + bucketNum + "'";
         }
 
-        query += " LIMIT " + this.bufferSize;
+        query += ") as urls_ranks where (urls_ranks.ranking <= "
+                + maxDocsPerBucket + ") order by ranking";
+
+        if (maxNumResults != -1) {
+            query += " LIMIT " + this.maxNumResults;
+        }
 
         int alreadyprocessed = 0;
         int numhits = 0;
@@ -212,7 +166,7 @@ public class SQLSpout extends BaseRichSpout {
                 String url = rs.getString("url");
                 numhits++;
                 // already processed? skip
-                if (beingProcessed.contains(url)) {
+                if (beingProcessed.containsKey(url)) {
                     alreadyprocessed++;
                     continue;
                 }
@@ -225,7 +179,14 @@ public class SQLSpout extends BaseRichSpout {
                 String URLMD = url + metadata;
                 List<Object> v = SCHEME.deserialize(ByteBuffer.wrap(URLMD
                         .getBytes()));
-                buffer.add(v);
+                Values vals = new Values();
+                vals.addAll(v);
+                buffer.add(vals);
+            }
+
+            // no results? reset the date
+            if (numhits == 0) {
+                lastNextFetchDate = null;
             }
 
             eventCounter.scope("already_being_processed").incrBy(
@@ -256,29 +217,15 @@ public class SQLSpout extends BaseRichSpout {
     }
 
     @Override
-    public void activate() {
-        super.activate();
-        active = true;
-    }
-
-    @Override
-    public void deactivate() {
-        super.deactivate();
-        active = false;
-    }
-
-    @Override
     public void ack(Object msgId) {
         LOG.debug("{}  Ack for {}", logIdprefix, msgId);
-        beingProcessed.remove(msgId);
-        eventCounter.scope("acked").incrBy(1);
+        super.ack(msgId);
     }
 
     @Override
     public void fail(Object msgId) {
         LOG.info("{}  Fail for {}", logIdprefix, msgId);
-        beingProcessed.remove(msgId);
-        eventCounter.scope("failed").incrBy(1);
+        super.fail(msgId);
     }
 
     @Override

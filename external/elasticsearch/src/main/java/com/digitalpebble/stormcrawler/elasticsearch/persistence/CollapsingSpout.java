@@ -19,7 +19,7 @@ package com.digitalpebble.stormcrawler.elasticsearch.persistence;
 
 import static org.elasticsearch.index.query.QueryBuilders.boolQuery;
 
-import java.util.Calendar;
+import java.time.Instant;
 import java.util.Collections;
 import java.util.Date;
 import java.util.LinkedList;
@@ -81,8 +81,9 @@ public class CollapsingSpout extends AbstractSpout implements
     @Override
     protected void populateBuffer() {
         // not used yet or returned empty results
-        if (lastDate == null) {
-            lastDate = new Date();
+        if (queryDate == null) {
+            queryDate = new Date();
+            lastTimeResetToNOW = Instant.now();
             lastStartOffset = 0;
         }
         // been running same query for too long and paging deep?
@@ -92,7 +93,7 @@ public class CollapsingSpout extends AbstractSpout implements
         }
 
         String formattedLastDate = ISODateTimeFormat.dateTimeNoMillis().print(
-                lastDate.getTime());
+                queryDate.getTime());
 
         LOG.info("{} Populating buffer with nextFetchDate <= {}", logIdprefix,
                 formattedLastDate);
@@ -151,38 +152,22 @@ public class CollapsingSpout extends AbstractSpout implements
         // dump query to log
         LOG.debug("{} ES query {}", logIdprefix, request.toString());
 
-        timeStartESQuery = System.currentTimeMillis();
-        isInESQuery.set(true);
+        isInQuery.set(true);
         client.searchAsync(request, this);
     }
 
     @Override
     public void onFailure(Exception e) {
         LOG.error("{} Exception with ES query", logIdprefix, e);
-        isInESQuery.set(false);
+        isInQuery.set(false);
     }
 
     @Override
     public void onResponse(SearchResponse response) {
-        long timeTaken = System.currentTimeMillis() - timeStartESQuery;
+        long timeTaken = System.currentTimeMillis() - timeLastQuery;
 
         SearchHit[] hits = response.getHits().getHits();
         int numBuckets = hits.length;
-
-        // reset the value for next fetch date if the previous one is too old
-        if (resetFetchDateAfterNSecs != -1) {
-            Calendar diffCal = Calendar.getInstance();
-            diffCal.setTime(lastDate);
-            diffCal.add(Calendar.SECOND, resetFetchDateAfterNSecs);
-            // compare to now
-            if (diffCal.before(Calendar.getInstance())) {
-                LOG.info(
-                        "{} lastDate set to null based on resetFetchDateAfterNSecs {}",
-                        logIdprefix, resetFetchDateAfterNSecs);
-                lastDate = null;
-                lastStartOffset = 0;
-            }
-        }
 
         int alreadyprocessed = 0;
         int numDocs = 0;
@@ -215,19 +200,33 @@ public class CollapsingSpout extends AbstractSpout implements
             }
         }
 
-        esQueryTimes.addMeasurement(timeTaken);
+        queryTimes.addMeasurement(timeTaken);
         // could be derived from the count of query times above
         eventCounter.scope("ES_queries").incrBy(1);
         eventCounter.scope("ES_docs").incrBy(numDocs);
         eventCounter.scope("already_being_processed").incrBy(alreadyprocessed);
 
         LOG.info(
-                "{} ES query returned {} hits from {} buckets in {} msec with {} already being processed",
-                logIdprefix, numDocs, numBuckets, timeTaken, alreadyprocessed);
+                "{} ES query returned {} hits from {} buckets in {} msec with {} already being processed.Took {} msec per doc on average.",
+                logIdprefix, numDocs, numBuckets, timeTaken, alreadyprocessed,
+                ((float) timeTaken / numDocs));
+
+        // reset the value for next fetch date if the previous one is too old
+        if (resetFetchDateAfterNSecs != -1) {
+            Instant changeNeededOn = Instant.ofEpochMilli(lastTimeResetToNOW
+                    .toEpochMilli() + (resetFetchDateAfterNSecs * 1000));
+            if (Instant.now().isAfter(changeNeededOn)) {
+                LOG.info(
+                        "queryDate reset based on resetFetchDateAfterNSecs {}",
+                        resetFetchDateAfterNSecs);
+                queryDate = null;
+                lastStartOffset = 0;
+            }
+        }
 
         // no more results?
         if (numBuckets == 0) {
-            lastDate = null;
+            queryDate = null;
             lastStartOffset = 0;
         }
         // still got some results but paging won't help
@@ -238,7 +237,7 @@ public class CollapsingSpout extends AbstractSpout implements
         }
 
         // remove lock
-        isInESQuery.set(false);
+        isInQuery.set(false);
     }
 
     private final boolean addHitToBuffer(SearchHit hit) {
